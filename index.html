@@ -104,7 +104,7 @@
   <footer>Proyecto independiente de identificación y mantenimiento de bombas de vacío</footer>
   <script>
     const API = 'https://xasofcduhvxcvmxabysw.supabase.co/functions/v1/registrar-mantencion';
-    const bombas = Array.from({length:8},(_,i)=>({
+    const bombas = Array.from({length:9},(_,i)=>({
       id:`BVA-${String(i+1).padStart(3,'0')}`,
       nombre:`Bomba de vacío N.º ${i+1}`, marca:'Elmo Rietschle',
       serie:'Zephyr C-VLR', modelo:'Por confirmar', ubicacion:'Por definir',
