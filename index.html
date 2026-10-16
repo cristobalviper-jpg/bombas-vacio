@@ -66,13 +66,14 @@
       <div class="panel"><div class="notice"><strong>Versión de prueba:</strong> los códigos BVA-001 a BVA-008 son provisionales. Debemos reemplazarlos por la identificación real de cada bomba antes de generar etiquetas definitivas.</div></div>
     </section>
     <section id="ficha" class="hide">
-      <button class="secondary" onclick="volver()">← Todas las bombas</button>
+      <p id="estadoConexion" class="meta" role="status" aria-live="polite"></p>
+      
       <div class="panel">
         <span class="tag">FICHA DEL EQUIPO</span>
         <h2 id="nombre"></h2>
         <div id="datos" class="details"></div>
       </div>
-      <div class="demo"><strong>VERSIÓN DE PRUEBA:</strong> los registros se guardan únicamente en este navegador. No están compartidos con otros teléfonos ni son adecuados aún como historial oficial. Al borrar los datos del navegador podrían perderse.</div>
+      <div class="demo"><strong>VERSIÓN DE PRUEBA:</strong> Los registros se consultan y guardan en Supabase. No ingresar información confidencial: el acceso no solicita contraseña y el nombre del mecánico no está verificado.</div>
       <div class="panel" id="identificacion">
         <h3>👷 Identificación del mecánico</h3>
         <p class="muted small">Escribe tu nombre y apellido para consultar y registrar trabajos. El nombre es declarado por la persona; no equivale a una identidad verificada.</p>
@@ -80,7 +81,7 @@
         <div class="actions"><button type="button" id="btnEntrar">Ingresar a la ficha</button></div>
       </div>
       <div id="areaMecanico" class="hide">
-        <div class="panel row"><div><strong id="nombreSesion"></strong><div class="meta">Identificación local de prueba</div></div><button class="secondary" id="btnCambiarNombre">Cambiar nombre</button></div>
+        <div class="panel row"><div><strong id="nombreSesion"></strong><div class="meta">Nombre declarado por el mecánico</div></div><button class="secondary" id="btnCambiarNombre">Cambiar nombre</button></div>
         <div class="panel"><h3>🛠️ Historial de mantenimiento e inspecciones</h3><div id="historial" class="empty">No hay registros todavía.</div></div>
         <div class="panel"><h3>🕓 Bitácora de modificaciones</h3><div id="bitacora" class="empty">Sin cambios registrados.</div></div>
       </div>
@@ -89,165 +90,155 @@
         <form id="formMantencion">
           <div class="form-grid">
             <div><label for="fechaTrabajo">Fecha del trabajo</label><input id="fechaTrabajo" type="date" required></div>
-            <div><label for="tipoTrabajo">Tipo de trabajo</label><select id="tipoTrabajo"><option>Preventiva</option><option>Correctiva</option><option>Inspección</option><option>Lubricación</option><option>Otra</option></select></div>
+            <div><label for="tipoTrabajo">Tipo de trabajo</label><select id="tipoTrabajo"><option>Preventiva</option><option>Correctiva</option><option>Inspección</option></select></div>
           </div>
           <label for="trabajo">Trabajo realizado</label><textarea id="trabajo" required maxlength="5000" placeholder="Describe la intervención realizada..."></textarea>
           <label for="repuestos">Repuestos utilizados</label><textarea id="repuestos" maxlength="2000" placeholder="Opcional"></textarea>
           <label for="observaciones">Observaciones y recomendaciones</label><textarea id="observaciones" maxlength="3000" placeholder="Opcional"></textarea>
-          <div class="actions"><button type="submit" id="btnGuardar">Guardar registro de prueba</button><button type="button" class="secondary" id="btnCancelar">Cancelar edición</button></div>
-          <p class="meta">La fecha y hora de creación o edición se registran automáticamente según este dispositivo. Fotografías y almacenamiento compartido se incorporarán después.</p>
+          <div class="actions"><button type="submit" id="btnGuardar">Guardar mantención</button><button type="button" class="secondary" id="btnCancelar">Cancelar edición</button></div>
+          <p class="meta">La fecha y hora se registran en Supabase. Las fotografías aún no están habilitadas.</p>
         </form>
       </div>
     </section>
   </main>
   <footer>Proyecto independiente de identificación y mantenimiento de bombas de vacío</footer>
   <script>
-    // Datos provisionales: reemplazaremos códigos y modelos con el inventario real.
+    const API = 'https://xasofcduhvxcvmxabysw.supabase.co/functions/v1/registrar-mantencion';
     const bombas = Array.from({length:8},(_,i)=>({
       id:`BVA-${String(i+1).padStart(3,'0')}`,
-      nombre:`Bomba de vacío N.º ${i+1}`,
-      marca:'Elmo Rietschle',
-      serie:'Zephyr C-VLR',
-      modelo:'Por confirmar',
-      ubicacion:'Por definir',
-      numeroSerie:'Por registrar',
-      sap:'Por registrar'
+      nombre:`Bomba de vacío N.º ${i+1}`, marca:'Elmo Rietschle',
+      serie:'Zephyr C-VLR', modelo:'Por confirmar', ubicacion:'Por definir',
+      numeroSerie:'Por registrar', sap:'Por registrar'
     }));
-    function campo(etiqueta,valor){
-      const d=document.createElement('div'); d.className='field';
-      const s=document.createElement('span'); s.textContent=etiqueta;
-      const v=document.createElement('strong'); v.textContent=valor;
-      d.append(s,v); return d;
+    let bombaActiva=null, mecanicoActual='', registroEditado=null;
+    let mantenciones=[], auditoria=[], equipoActual=null;
+    const $ = id => document.getElementById(id);
+    function nodo(tag,contenido,clase){const e=document.createElement(tag);if(clase)e.className=clase;e.textContent=contenido;return e;}
+    function campo(t,v){const d=nodo('div','','field');d.append(nodo('span',t),nodo('strong',v||'Por registrar'));return d;}
+    function formatoFecha(v){if(!v)return 'Sin fecha';const d=new Date(v);return isNaN(d.valueOf())?String(v):d.toLocaleString('es-CL',{dateStyle:'medium',timeStyle:'short'});}
+    function estado(v,fallo=false){$('estadoConexion').textContent=v;$('estadoConexion').style.color=fallo?'#ad3535':'#5c6e7f';}
+    async function solicitar(cuerpo){
+      let r;
+      try { r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cuerpo)}); }
+      catch {throw new Error('No hay conexión con Supabase. Revisa Internet e inténtalo nuevamente.');}
+      let out;
+      try{out=await r.json();}catch{throw new Error('Respuesta inesperada del servidor.');}
+      if(!r.ok||out?.ok===false)throw new Error(out?.error||`Error HTTP ${r.status}`);
+      return out;
     }
-    // PROTOTIPO: localStorage es local al dispositivo, NO es una base de datos compartida.
-    const STORAGE_KEY='bombas_vacio_demo_v2';
-    let registroEditado=null, bombaActiva=null, mecanicoActual='';
-    function obtenerDatos(){
-      try { const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}'); return {intervenciones:Array.isArray(raw.intervenciones)?raw.intervenciones:[],auditoria:Array.isArray(raw.auditoria)?raw.auditoria:[]}; }
-      catch { return {intervenciones:[],auditoria:[]}; }
+    function pintarFicha(b){
+      $('nombre').textContent=`${b.nombre} · ${b.id}`;
+      const d=$('datos');d.replaceChildren();
+      [['Código',b.id],['Fabricante',b.fabricante||b.marca],['Serie de bomba',b.serie_modelo||b.serie],
+       ['Modelo',b.modelo],['Ubicación',b.ubicacion],['N.º de serie',b.numero_serie||b.numeroSerie],
+       ['Código SAP',b.codigo_sap||b.sap]].forEach(([k,v])=>d.append(campo(k,v)));
     }
-    function guardarDatos(datos){ localStorage.setItem(STORAGE_KEY,JSON.stringify(datos)); }
-    function ahora(){return new Date().toISOString();}
-    function formatoFecha(iso){ return new Date(iso).toLocaleString('es-CL',{dateStyle:'medium',timeStyle:'short'}); }
-    function nodo(tag, contenido, clase){const el=document.createElement(tag);if(clase)el.className=clase;el.textContent=contenido;return el;}
+    async function cargarHistorial(){
+      if(!bombaActiva)return;
+      const actual=bombaActiva;
+      estado('Consultando historial de esta bomba…');
+      try{
+        const res=await solicitar({accion:'consultar',equipo_id:actual});
+        if(actual!==bombaActiva)return;
+        equipoActual=res.equipo;
+        mantenciones=Array.isArray(res.mantenciones)?res.mantenciones:[];
+        auditoria=Array.isArray(res.auditoria)?res.auditoria:[];
+        pintarFicha(equipoActual);renderHistorial();
+        estado(`Historial actualizado desde Supabase · ${mantenciones.length} mantención(es)`);
+      }catch(e){estado(e.message,true);$('historial').replaceChildren(nodo('div','No se pudo cargar el historial.','empty'));}
+    }
     function abrir(id){
       const b=bombas.find(x=>x.id===id);
-      if(!b){volver();return;}
-      bombaActiva=id;
-      document.getElementById('portal').classList.add('hide');
-      document.getElementById('ficha').classList.remove('hide');
-      document.getElementById('nombre').textContent=`${b.nombre} · ${b.id}`;
-      const d=document.getElementById('datos'); d.replaceChildren();
-      [['Código',b.id],['Fabricante',b.marca],['Serie de bomba',b.serie],['Modelo',b.modelo],['Ubicación',b.ubicacion],['N.º de serie',b.numeroSerie],['Código SAP',b.sap]].forEach(([k,v])=>d.appendChild(campo(k,v)));
-      restablecerFormulario();
-      mostrarSesion();
-      history.replaceState({},'',`?id=${encodeURIComponent(b.id)}`);
-      window.scrollTo(0,0);
-    }
-    function volver(){
-      bombaActiva=null;
-      document.getElementById('ficha').classList.add('hide');
-      document.getElementById('portal').classList.remove('hide');
-      history.replaceState({},'',location.pathname);
-      window.scrollTo(0,0);
+      $('portal').classList.add('hide');
+      $('ficha').classList.remove('hide');
+      if(!b){$('ficha').replaceChildren(nodo('div','Bomba no encontrada. Verifica el código QR.','notice'));return;}
+      bombaActiva=id;equipoActual=b;
+      pintarFicha(b);restablecerFormulario();mostrarSesion();
+      history.replaceState({},'',`?id=${encodeURIComponent(id)}`);
+      cargarHistorial();window.scrollTo(0,0);
     }
     function mostrarSesion(){
       const activo=Boolean(mecanicoActual);
-      document.getElementById('identificacion').classList.toggle('hide',activo);
-      document.getElementById('areaMecanico').classList.toggle('hide',!activo);
-      document.getElementById('panelFormulario').classList.toggle('hide',!activo);
-      document.getElementById('nombreSesion').textContent=activo?`Mecánico: ${mecanicoActual}`:'';
+      $('identificacion').classList.toggle('hide',activo);
+      $('areaMecanico').classList.toggle('hide',!activo);
+      $('panelFormulario').classList.toggle('hide',!activo);
+      $('nombreSesion').textContent=activo?`Mecánico: ${mecanicoActual}`:'';
       if(activo)renderHistorial();
     }
     function restablecerFormulario(){
-      registroEditado=null;document.getElementById('formMantencion').reset();
-      document.getElementById('fechaTrabajo').value=new Date().toLocaleDateString('en-CA');
-      document.getElementById('formTitle').textContent='➕ Registrar intervención';
-      document.getElementById('btnGuardar').textContent='Guardar registro de prueba';
+      registroEditado=null;$('formMantencion').reset();
+      $('fechaTrabajo').value=new Date().toLocaleDateString('en-CA');
+      $('formTitle').textContent='➕ Registrar intervención';
+      $('btnGuardar').textContent='Guardar mantención';
     }
     function renderHistorial(){
-      if(!bombaActiva)return;
-      const datos=obtenerDatos();
-      const listado=datos.intervenciones.filter(x=>x.bomba===bombaActiva).sort((a,b)=>b.creadoEn.localeCompare(a.creadoEn));
-      const hist=document.getElementById('historial');hist.replaceChildren();hist.className='';
-      if(!listado.length){hist.append(nodo('div','Todavía no hay intervenciones registradas en este navegador.','empty'));}
-      listado.forEach(item=>{
-        const div=nodo('article','','record');
-        const top=nodo('div','','row');
-        top.append(nodo('span',item.tipo,'pill'),nodo('span',`Trabajo: ${item.fechaTrabajo}`,'meta'));
-        div.append(top,nodo('h4',item.trabajo));
-        if(item.repuestos)div.append(nodo('p',`Repuestos: ${item.repuestos}`));
-        if(item.observaciones)div.append(nodo('p',`Observaciones: ${item.observaciones}`));
-        div.append(nodo('div',`Creado por ${item.creadoPor} · ${formatoFecha(item.creadoEn)}`,'meta'));
-        if(item.editadoEn)div.append(nodo('div',`Última edición: ${item.editadoPor} · ${formatoFecha(item.editadoEn)}`,'meta'));
-        const edit=document.createElement('button');edit.className='secondary';edit.textContent='Editar intervención';edit.type='button';edit.style.marginTop='10px';
-        edit.addEventListener('click',()=>editar(item.id));div.append(edit);hist.append(div);
-      });
-      const aud=datos.auditoria.filter(x=>x.bomba===bombaActiva).sort((a,b)=>b.fecha.localeCompare(a.fecha));
-      const log=document.getElementById('bitacora');log.replaceChildren();log.className='';
-      if(!aud.length)log.append(nodo('div','No hay modificaciones registradas.','empty'));
-      aud.forEach(x=>{
-        const d=nodo('div','','audit');d.append(nodo('strong',`${x.actor} · ${x.accion}`));
-        d.append(nodo('div',formatoFecha(x.fecha),'meta'));
-        if(x.detalle)d.append(nodo('div',x.detalle,'small'));
+      const hist=$('historial');hist.replaceChildren();hist.className='';
+      if(!mantenciones.length)hist.append(nodo('div','Todavía no hay intervenciones registradas para esta bomba.','empty'));
+      for(const item of mantenciones){
+        const d=nodo('article','','record'),top=nodo('div','','row');
+        top.append(nodo('span',item.tipo_trabajo,'pill'),nodo('span',`Trabajo: ${item.fecha_trabajo}`,'meta'));
+        d.append(top,nodo('h4',item.trabajo_realizado));
+        if(item.repuestos)d.append(nodo('p',`Repuestos: ${item.repuestos}`));
+        if(item.observaciones)d.append(nodo('p',`Observaciones: ${item.observaciones}`));
+        d.append(nodo('div',`Creado por ${item.creado_por} · ${formatoFecha(item.creado_en)}`,'meta'));
+        if(item.modificado_en)d.append(nodo('div',`Última edición: ${item.modificado_por} · ${formatoFecha(item.modificado_en)}`,'meta'));
+        if(mecanicoActual){const btn=document.createElement('button');btn.className='secondary';btn.type='button';btn.textContent='Editar intervención';btn.style.marginTop='10px';btn.addEventListener('click',()=>editar(item.id));d.append(btn);}
+        hist.append(d);
+      }
+      const log=$('bitacora');log.replaceChildren();log.className='';
+      if(!auditoria.length)log.append(nodo('div','Todavía no hay cambios registrados.','empty'));
+      for(const x of auditoria){
+        const d=nodo('div','','audit');d.append(nodo('strong',`${x.responsable_declarado} · ${x.accion}`));
+        d.append(nodo('div',formatoFecha(x.fecha_hora),'meta'));
+        if(x.accion==='EDICION' && x.valores_anteriores){
+          const antes=x.valores_anteriores,despues=x.valores_nuevos||{};
+          const cambios=['fecha_trabajo','tipo_trabajo','trabajo_realizado','repuestos','observaciones']
+            .filter(k=>antes[k]!==despues[k]).map(k=>`${k}: ${antes[k]||'—'} → ${despues[k]||'—'}`);
+          if(cambios.length)d.append(nodo('div',cambios.join(' | '),'small'));
+        }
         log.append(d);
-      });
+      }
     }
     function editar(id){
-      const item=obtenerDatos().intervenciones.find(x=>x.id===id && x.bomba===bombaActiva);
+      const item=mantenciones.find(x=>x.id===id&&x.equipo_id===bombaActiva);
       if(!item)return;
-      registroEditado=id;
-      document.getElementById('fechaTrabajo').value=item.fechaTrabajo;
-      document.getElementById('tipoTrabajo').value=item.tipo;
-      document.getElementById('trabajo').value=item.trabajo;
-      document.getElementById('repuestos').value=item.repuestos;
-      document.getElementById('observaciones').value=item.observaciones;
-      document.getElementById('formTitle').textContent='✏️ Editar intervención';
-      document.getElementById('btnGuardar').textContent='Guardar cambios de prueba';
-      document.getElementById('panelFormulario').scrollIntoView({behavior:'smooth'});
+      registroEditado=item;
+      $('fechaTrabajo').value=item.fecha_trabajo;
+      $('tipoTrabajo').value=item.tipo_trabajo;
+      $('trabajo').value=item.trabajo_realizado;
+      $('repuestos').value=item.repuestos||'';
+      $('observaciones').value=item.observaciones||'';
+      $('formTitle').textContent='✏️ Editar intervención';
+      $('btnGuardar').textContent='Guardar cambios';
+      $('panelFormulario').scrollIntoView({behavior:'smooth'});
     }
-    document.getElementById('btnEntrar').addEventListener('click',()=>{
-      const nombre=document.getElementById('mecanico').value.trim().replace(/\s+/g,' ');
-      if(nombre.length<3){alert('Ingresa tu nombre y apellido.');return;}
-      mecanicoActual=nombre; mostrarSesion();
+    $('btnEntrar').addEventListener('click',()=>{
+      const nombre=$('mecanico').value.trim().replace(/\s+/g,' ');
+      if(nombre.length<5){alert('Ingresa nombre y apellido.');return;}
+      mecanicoActual=nombre;mostrarSesion();
     });
-    document.getElementById('btnCambiarNombre').addEventListener('click',()=>{
-      mecanicoActual='';restablecerFormulario();mostrarSesion();
+    $('btnCambiarNombre').addEventListener('click',()=>{mecanicoActual='';restablecerFormulario();mostrarSesion();});
+    $('btnCancelar').addEventListener('click',restablecerFormulario);
+    $('formMantencion').addEventListener('submit',async event=>{
+      event.preventDefault();if(!mecanicoActual||!bombaActiva)return;
+      const btn=$('btnGuardar');btn.disabled=true;
+      const payload={accion:registroEditado?'editar':'crear',equipo_id:bombaActiva,responsable:mecanicoActual,
+        fecha_trabajo:$('fechaTrabajo').value,tipo_trabajo:$('tipoTrabajo').value,
+        trabajo_realizado:$('trabajo').value.trim(),repuestos:$('repuestos').value.trim(),
+        observaciones:$('observaciones').value.trim()};
+      if(registroEditado){payload.mantencion_id=registroEditado.id;payload.version_esperada=registroEditado.modificado_en||registroEditado.creado_en;}
+      try{
+        await solicitar(payload);
+        restablecerFormulario();await cargarHistorial();
+        alert('Mantención guardada en Supabase.');
+        $('historial').scrollIntoView({behavior:'smooth'});
+      }catch(e){alert(`No se pudo guardar: ${e.message}`);}
+      finally{btn.disabled=false;}
     });
-    document.getElementById('btnCancelar').addEventListener('click',restablecerFormulario);
-    document.getElementById('formMantencion').addEventListener('submit',event=>{
-      event.preventDefault();
-      if(!mecanicoActual || !bombaActiva)return;
-      const fechaTrabajo=document.getElementById('fechaTrabajo').value;
-      const tipo=document.getElementById('tipoTrabajo').value;
-      const trabajo=document.getElementById('trabajo').value.trim();
-      const repuestos=document.getElementById('repuestos').value.trim();
-      const observaciones=document.getElementById('observaciones').value.trim();
-      if(!fechaTrabajo || !trabajo){alert('Completa la fecha y el trabajo realizado.');return;}
-      const datos=obtenerDatos(), marca=ahora();
-      if(registroEditado){
-        const item=datos.intervenciones.find(x=>x.id===registroEditado&&x.bomba===bombaActiva);
-        if(!item)return;
-        const anterior={fechaTrabajo:item.fechaTrabajo,tipo:item.tipo,trabajo:item.trabajo,repuestos:item.repuestos,observaciones:item.observaciones};
-        Object.assign(item,{fechaTrabajo,tipo,trabajo,repuestos,observaciones,editadoPor:mecanicoActual,editadoEn:marca});
-        datos.auditoria.push({id:crypto.randomUUID(),registroId:item.id,bomba:bombaActiva,accion:'Editó intervención',actor:mecanicoActual,fecha:marca,detalle:`Antes: ${JSON.stringify(anterior)} | Después: ${JSON.stringify({fechaTrabajo,tipo,trabajo,repuestos,observaciones})}`});
-      }else{
-        const id=crypto.randomUUID();
-        datos.intervenciones.push({id,bomba:bombaActiva,fechaTrabajo,tipo,trabajo,repuestos,observaciones,creadoPor:mecanicoActual,creadoEn:marca,editadoPor:null,editadoEn:null});
-        datos.auditoria.push({id:crypto.randomUUID(),registroId:id,bomba:bombaActiva,accion:'Creó intervención',actor:mecanicoActual,fecha:marca,detalle:trabajo});
-      }
-      try{guardarDatos(datos);}catch{alert('No se pudo guardar el registro de prueba en este navegador.');return;}
-      restablecerFormulario();renderHistorial();
-      document.getElementById('historial').scrollIntoView({behavior:'smooth'});
-    });
-    const cont=document.getElementById('equipos');
+    const cont=$('equipos');
     bombas.forEach(b=>{
-      const c=document.createElement('article'); c.className='card';
-      const tag=document.createElement('span');tag.className='tag';tag.textContent=b.id;
-      const t=document.createElement('h3');t.textContent=b.nombre;
-      const p=document.createElement('p');p.className='muted';p.textContent=`${b.marca} · ${b.modelo}`;
-      const a=document.createElement('a');a.className='linkbutton';a.href=`?id=${b.id}`;a.textContent='Abrir ficha →';
-      c.append(tag,t,p,a);cont.appendChild(c);
+      const c=nodo('article','','card');c.append(nodo('span',b.id,'tag'),nodo('h3',b.nombre),nodo('p',`${b.marca} · ${b.modelo}`,'muted'));
+      const a=document.createElement('a');a.className='linkbutton';a.href=`?id=${b.id}`;a.textContent='Abrir ficha →';c.append(a);cont.append(c);
     });
     const id=new URLSearchParams(location.search).get('id');
     if(id)abrir(id);
