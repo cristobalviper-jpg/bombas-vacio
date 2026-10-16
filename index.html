@@ -35,7 +35,25 @@
     .secondary:hover { background:#dbe5eb; }
     .notice { background:#fff6dd; border:1px solid #ecd9a0; border-radius:9px; padding:13px; color:#634c15; }
     .empty { padding:13px; border:1px dashed #c9d4dc; border-radius:9px; color:#607282; }
-    .hide { display:none; }
+    .hide { display:none !important; }
+    label { display:block; font-weight:650; margin:11px 0 5px; }
+    input,select,textarea { width:100%; border:1px solid #cbd6df; border-radius:8px; padding:11px; font:inherit; background:white; color:#142638; }
+    textarea { min-height:100px; resize:vertical; }
+    .meta { font-size:.85rem; color:#5c6e7f; }
+    .record { padding:15px 0; border-bottom:1px solid #e0e6eb; }
+    .record:last-child { border-bottom:0; }
+    .record h4 { margin:5px 0; }
+    .record p { white-space:pre-wrap; margin:8px 0; }
+    .pill { display:inline-block; background:#eaf5f5; color:#116c85; padding:3px 8px; border-radius:5px; font-size:.8rem; font-weight:650; }
+    .audit { border-left:3px solid #cedbe3; padding:5px 0 5px 11px; margin:10px 0; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .demo { background:#fff6dd; border:1px solid #ecd9a0; border-radius:9px; padding:12px; margin:14px 0; color:#634c15; }
+    .danger { background:#a93f3f; }
+    .danger:hover { background:#8d3434; }
+    .small { font-size:.88rem; }
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+    .form-grid label { margin-top:0; }
+    :focus-visible { outline:3px solid #77bdd7; outline-offset:2px; }
     footer { text-align:center; padding:18px; color:#6b7a87; font-size:.8rem; }
   </style>
 </head>
@@ -54,12 +72,31 @@
         <h2 id="nombre"></h2>
         <div id="datos" class="details"></div>
       </div>
-      <div class="panel"><h3>🛠️ Historial de mantenimiento</h3><div class="empty">Todavía no hay intervenciones registradas.</div></div>
-      <div class="panel"><h3>🔎 Inspecciones realizadas</h3><div class="empty">No hay inspecciones cargadas.</div></div>
+      <div class="demo"><strong>VERSIÓN DE PRUEBA:</strong> los registros se guardan únicamente en este navegador. No están compartidos con otros teléfonos ni son adecuados aún como historial oficial. Al borrar los datos del navegador podrían perderse.</div>
+      <div class="panel" id="identificacion">
+        <h3>👷 Identificación del mecánico</h3>
+        <p class="muted small">Escribe tu nombre y apellido para consultar y registrar trabajos. El nombre es declarado por la persona; no equivale a una identidad verificada.</p>
+        <label for="mecanico">Nombre y apellido</label><input id="mecanico" autocomplete="name" maxlength="90" placeholder="Ej.: Juan Pérez" required>
+        <div class="actions"><button type="button" id="btnEntrar">Ingresar a la ficha</button></div>
+      </div>
+      <div id="areaMecanico" class="hide">
+        <div class="panel row"><div><strong id="nombreSesion"></strong><div class="meta">Identificación local de prueba</div></div><button class="secondary" id="btnCambiarNombre">Cambiar nombre</button></div>
+        <div class="panel"><h3>🛠️ Historial de mantenimiento e inspecciones</h3><div id="historial" class="empty">No hay registros todavía.</div></div>
+        <div class="panel"><h3>🕓 Bitácora de modificaciones</h3><div id="bitacora" class="empty">Sin cambios registrados.</div></div>
+      </div>
       <div class="panel"><h3>📚 Manuales y documentación</h3><p class="muted">Aquí incorporaremos el catálogo y los manuales de cada modelo.</p></div>
-      <div class="panel"><h3>➕ Registrar intervención</h3>
-        <div class="notice">Esta función se habilitará cuando configuremos el acceso de usuarios y el almacenamiento compartido. Así ningún registro se perderá ni quedará guardado solo en un teléfono.</div>
-        <div class="actions"><button disabled>Registrar mantención (próximamente)</button></div>
+      <div class="panel hide" id="panelFormulario"><h3 id="formTitle">➕ Registrar intervención</h3>
+        <form id="formMantencion">
+          <div class="form-grid">
+            <div><label for="fechaTrabajo">Fecha del trabajo</label><input id="fechaTrabajo" type="date" required></div>
+            <div><label for="tipoTrabajo">Tipo de trabajo</label><select id="tipoTrabajo"><option>Preventiva</option><option>Correctiva</option><option>Inspección</option><option>Lubricación</option><option>Otra</option></select></div>
+          </div>
+          <label for="trabajo">Trabajo realizado</label><textarea id="trabajo" required maxlength="5000" placeholder="Describe la intervención realizada..."></textarea>
+          <label for="repuestos">Repuestos utilizados</label><textarea id="repuestos" maxlength="2000" placeholder="Opcional"></textarea>
+          <label for="observaciones">Observaciones y recomendaciones</label><textarea id="observaciones" maxlength="3000" placeholder="Opcional"></textarea>
+          <div class="actions"><button type="submit" id="btnGuardar">Guardar registro de prueba</button><button type="button" class="secondary" id="btnCancelar">Cancelar edición</button></div>
+          <p class="meta">La fecha y hora de creación o edición se registran automáticamente según este dispositivo. Fotografías y almacenamiento compartido se incorporarán después.</p>
+        </form>
       </div>
     </section>
   </main>
@@ -82,23 +119,127 @@
       const v=document.createElement('strong'); v.textContent=valor;
       d.append(s,v); return d;
     }
+    // PROTOTIPO: localStorage es local al dispositivo, NO es una base de datos compartida.
+    const STORAGE_KEY='bombas_vacio_demo_v2';
+    let registroEditado=null, bombaActiva=null, mecanicoActual='';
+    function obtenerDatos(){
+      try { const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}'); return {intervenciones:Array.isArray(raw.intervenciones)?raw.intervenciones:[],auditoria:Array.isArray(raw.auditoria)?raw.auditoria:[]}; }
+      catch { return {intervenciones:[],auditoria:[]}; }
+    }
+    function guardarDatos(datos){ localStorage.setItem(STORAGE_KEY,JSON.stringify(datos)); }
+    function ahora(){return new Date().toISOString();}
+    function formatoFecha(iso){ return new Date(iso).toLocaleString('es-CL',{dateStyle:'medium',timeStyle:'short'}); }
+    function nodo(tag, contenido, clase){const el=document.createElement(tag);if(clase)el.className=clase;el.textContent=contenido;return el;}
     function abrir(id){
       const b=bombas.find(x=>x.id===id);
       if(!b){volver();return;}
+      bombaActiva=id;
       document.getElementById('portal').classList.add('hide');
       document.getElementById('ficha').classList.remove('hide');
       document.getElementById('nombre').textContent=`${b.nombre} · ${b.id}`;
       const d=document.getElementById('datos'); d.replaceChildren();
       [['Código',b.id],['Fabricante',b.marca],['Serie de bomba',b.serie],['Modelo',b.modelo],['Ubicación',b.ubicacion],['N.º de serie',b.numeroSerie],['Código SAP',b.sap]].forEach(([k,v])=>d.appendChild(campo(k,v)));
+      restablecerFormulario();
+      mostrarSesion();
       history.replaceState({},'',`?id=${encodeURIComponent(b.id)}`);
       window.scrollTo(0,0);
     }
     function volver(){
+      bombaActiva=null;
       document.getElementById('ficha').classList.add('hide');
       document.getElementById('portal').classList.remove('hide');
       history.replaceState({},'',location.pathname);
       window.scrollTo(0,0);
     }
+    function mostrarSesion(){
+      const activo=Boolean(mecanicoActual);
+      document.getElementById('identificacion').classList.toggle('hide',activo);
+      document.getElementById('areaMecanico').classList.toggle('hide',!activo);
+      document.getElementById('panelFormulario').classList.toggle('hide',!activo);
+      document.getElementById('nombreSesion').textContent=activo?`Mecánico: ${mecanicoActual}`:'';
+      if(activo)renderHistorial();
+    }
+    function restablecerFormulario(){
+      registroEditado=null;document.getElementById('formMantencion').reset();
+      document.getElementById('fechaTrabajo').value=new Date().toLocaleDateString('en-CA');
+      document.getElementById('formTitle').textContent='➕ Registrar intervención';
+      document.getElementById('btnGuardar').textContent='Guardar registro de prueba';
+    }
+    function renderHistorial(){
+      if(!bombaActiva)return;
+      const datos=obtenerDatos();
+      const listado=datos.intervenciones.filter(x=>x.bomba===bombaActiva).sort((a,b)=>b.creadoEn.localeCompare(a.creadoEn));
+      const hist=document.getElementById('historial');hist.replaceChildren();hist.className='';
+      if(!listado.length){hist.append(nodo('div','Todavía no hay intervenciones registradas en este navegador.','empty'));}
+      listado.forEach(item=>{
+        const div=nodo('article','','record');
+        const top=nodo('div','','row');
+        top.append(nodo('span',item.tipo,'pill'),nodo('span',`Trabajo: ${item.fechaTrabajo}`,'meta'));
+        div.append(top,nodo('h4',item.trabajo));
+        if(item.repuestos)div.append(nodo('p',`Repuestos: ${item.repuestos}`));
+        if(item.observaciones)div.append(nodo('p',`Observaciones: ${item.observaciones}`));
+        div.append(nodo('div',`Creado por ${item.creadoPor} · ${formatoFecha(item.creadoEn)}`,'meta'));
+        if(item.editadoEn)div.append(nodo('div',`Última edición: ${item.editadoPor} · ${formatoFecha(item.editadoEn)}`,'meta'));
+        const edit=document.createElement('button');edit.className='secondary';edit.textContent='Editar intervención';edit.type='button';edit.style.marginTop='10px';
+        edit.addEventListener('click',()=>editar(item.id));div.append(edit);hist.append(div);
+      });
+      const aud=datos.auditoria.filter(x=>x.bomba===bombaActiva).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+      const log=document.getElementById('bitacora');log.replaceChildren();log.className='';
+      if(!aud.length)log.append(nodo('div','No hay modificaciones registradas.','empty'));
+      aud.forEach(x=>{
+        const d=nodo('div','','audit');d.append(nodo('strong',`${x.actor} · ${x.accion}`));
+        d.append(nodo('div',formatoFecha(x.fecha),'meta'));
+        if(x.detalle)d.append(nodo('div',x.detalle,'small'));
+        log.append(d);
+      });
+    }
+    function editar(id){
+      const item=obtenerDatos().intervenciones.find(x=>x.id===id && x.bomba===bombaActiva);
+      if(!item)return;
+      registroEditado=id;
+      document.getElementById('fechaTrabajo').value=item.fechaTrabajo;
+      document.getElementById('tipoTrabajo').value=item.tipo;
+      document.getElementById('trabajo').value=item.trabajo;
+      document.getElementById('repuestos').value=item.repuestos;
+      document.getElementById('observaciones').value=item.observaciones;
+      document.getElementById('formTitle').textContent='✏️ Editar intervención';
+      document.getElementById('btnGuardar').textContent='Guardar cambios de prueba';
+      document.getElementById('panelFormulario').scrollIntoView({behavior:'smooth'});
+    }
+    document.getElementById('btnEntrar').addEventListener('click',()=>{
+      const nombre=document.getElementById('mecanico').value.trim().replace(/\s+/g,' ');
+      if(nombre.length<3){alert('Ingresa tu nombre y apellido.');return;}
+      mecanicoActual=nombre; mostrarSesion();
+    });
+    document.getElementById('btnCambiarNombre').addEventListener('click',()=>{
+      mecanicoActual='';restablecerFormulario();mostrarSesion();
+    });
+    document.getElementById('btnCancelar').addEventListener('click',restablecerFormulario);
+    document.getElementById('formMantencion').addEventListener('submit',event=>{
+      event.preventDefault();
+      if(!mecanicoActual || !bombaActiva)return;
+      const fechaTrabajo=document.getElementById('fechaTrabajo').value;
+      const tipo=document.getElementById('tipoTrabajo').value;
+      const trabajo=document.getElementById('trabajo').value.trim();
+      const repuestos=document.getElementById('repuestos').value.trim();
+      const observaciones=document.getElementById('observaciones').value.trim();
+      if(!fechaTrabajo || !trabajo){alert('Completa la fecha y el trabajo realizado.');return;}
+      const datos=obtenerDatos(), marca=ahora();
+      if(registroEditado){
+        const item=datos.intervenciones.find(x=>x.id===registroEditado&&x.bomba===bombaActiva);
+        if(!item)return;
+        const anterior={fechaTrabajo:item.fechaTrabajo,tipo:item.tipo,trabajo:item.trabajo,repuestos:item.repuestos,observaciones:item.observaciones};
+        Object.assign(item,{fechaTrabajo,tipo,trabajo,repuestos,observaciones,editadoPor:mecanicoActual,editadoEn:marca});
+        datos.auditoria.push({id:crypto.randomUUID(),registroId:item.id,bomba:bombaActiva,accion:'Editó intervención',actor:mecanicoActual,fecha:marca,detalle:`Antes: ${JSON.stringify(anterior)} | Después: ${JSON.stringify({fechaTrabajo,tipo,trabajo,repuestos,observaciones})}`});
+      }else{
+        const id=crypto.randomUUID();
+        datos.intervenciones.push({id,bomba:bombaActiva,fechaTrabajo,tipo,trabajo,repuestos,observaciones,creadoPor:mecanicoActual,creadoEn:marca,editadoPor:null,editadoEn:null});
+        datos.auditoria.push({id:crypto.randomUUID(),registroId:id,bomba:bombaActiva,accion:'Creó intervención',actor:mecanicoActual,fecha:marca,detalle:trabajo});
+      }
+      try{guardarDatos(datos);}catch{alert('No se pudo guardar el registro de prueba en este navegador.');return;}
+      restablecerFormulario();renderHistorial();
+      document.getElementById('historial').scrollIntoView({behavior:'smooth'});
+    });
     const cont=document.getElementById('equipos');
     bombas.forEach(b=>{
       const c=document.createElement('article'); c.className='card';
