@@ -63,7 +63,7 @@
     <section id="portal">
       <div class="intro"><h2>Bombas de vacío</h2><p class="muted">Selecciona un equipo o abre directamente su ficha escaneando el código QR.</p></div>
       <div id="equipos" class="grid"></div>
-      <div class="panel"><div class="notice"><strong>Versión de prueba:</strong> los códigos BVA-001 a BVA-008 son provisionales. Debemos reemplazarlos por la identificación real de cada bomba antes de generar etiquetas definitivas.</div></div>
+      <div class="panel"><div class="notice"><strong>Versión de prueba:</strong> los códigos BVA-001 a BVA-009 identifican bombas físicas. La ubicación puede cambiar sin alterar su código ni su historial.</div></div>
     </section>
     <section id="ficha" class="hide">
       <p id="estadoConexion" class="meta" role="status" aria-live="polite"></p>
@@ -83,6 +83,32 @@
       <div id="areaMecanico" class="hide">
         <div class="panel row"><div><strong id="nombreSesion"></strong><div class="meta">Nombre declarado por el mecánico</div></div><button class="secondary" id="btnCambiarNombre">Cambiar nombre</button></div>
         <div class="panel"><h3>🛠️ Historial de mantenimiento e inspecciones</h3><div id="historial" class="empty">No hay registros todavía.</div></div>
+        <div class="panel"><h3>📍 Lugar de montaje actual</h3>
+          <p id="lugarActual" class="small">Consultando ubicación...</p>
+          <div class="actions"><button type="button" class="secondary" id="btnMostrarTraslado">Registrar cambio de montaje</button></div>
+          <form id="formTraslado" class="hide">
+            <div class="form-grid">
+              <div><label for="ubicacionNueva">Nueva ubicación</label>
+                <select id="ubicacionNueva" required>
+                  <option value="">Seleccionar ubicación...</option>
+                  <option value="Línea 1">Línea 1</option><option value="Línea 2">Línea 2</option>
+                  <option value="Línea 3">Línea 3</option><option value="Línea 4">Línea 4</option>
+                  <option value="Bodega / Respaldo">Bodega / Respaldo</option>
+                  <option value="Taller de mantenimiento">Taller de mantenimiento</option>
+                </select></div>
+              <div><label for="servicioNuevo">Servicio / punto de montaje</label>
+                <select id="servicioNuevo" required>
+                  <option value="">Seleccionar servicio...</option>
+                  <option>Micro</option><option>Fino</option><option>Respaldo</option><option>Mantenimiento</option>
+                </select></div>
+            </div>
+            <label for="motivoTraslado">Motivo del traslado</label>
+            <textarea id="motivoTraslado" required maxlength="500" placeholder="Ej.: Rotación operacional; bomba retirada por reparación."></textarea>
+            <div class="actions"><button type="submit" id="btnGuardarTraslado">Guardar cambio de montaje</button><button type="button" class="secondary" id="btnCancelarTraslado">Cancelar</button></div>
+            <p class="meta">La fecha y hora serán registradas por Supabase. El código BVA no se modifica.</p>
+          </form>
+          <h4>Historial de lugares de montaje</h4><div id="historialUbicaciones" class="empty">No hay traslados registrados.</div>
+        </div>
         <div class="panel"><h3>🕓 Bitácora de modificaciones</h3><div id="bitacora" class="empty">Sin cambios registrados.</div></div>
       </div>
       <div class="panel"><h3>📚 Manuales y documentación</h3><p class="muted">Aquí incorporaremos el catálogo y los manuales de cada modelo.</p></div>
@@ -111,7 +137,7 @@
       numeroSerie:'Por registrar', sap:'Por registrar'
     }));
     let bombaActiva=null, mecanicoActual='', registroEditado=null;
-    let mantenciones=[], auditoria=[], equipoActual=null;
+    let mantenciones=[], auditoria=[], traslados=[], equipoActual=null;
     const $ = id => document.getElementById(id);
     function nodo(tag,contenido,clase){const e=document.createElement(tag);if(clase)e.className=clase;e.textContent=contenido;return e;}
     function campo(t,v){const d=nodo('div','','field');d.append(nodo('span',t),nodo('strong',v||'Por registrar'));return d;}
@@ -130,7 +156,7 @@
       $('nombre').textContent=`${b.nombre} · ${b.id}`;
       const d=$('datos');d.replaceChildren();
       [['Código',b.id],['Fabricante',b.fabricante||b.marca],['Serie de bomba',b.serie_modelo||b.serie],
-       ['Modelo',b.modelo],['Ubicación',b.ubicacion],['N.º de serie',b.numero_serie||b.numeroSerie],
+       ['Modelo',b.modelo],['Ubicación actual',b.ubicacion_actual || b.ubicacion],['Servicio',b.servicio],['N.º de serie',b.numero_serie||b.numeroSerie],
        ['Código SAP',b.codigo_sap||b.sap]].forEach(([k,v])=>d.append(campo(k,v)));
     }
     async function cargarHistorial(){
@@ -143,7 +169,8 @@
         equipoActual=res.equipo;
         mantenciones=Array.isArray(res.mantenciones)?res.mantenciones:[];
         auditoria=Array.isArray(res.auditoria)?res.auditoria:[];
-        pintarFicha(equipoActual);renderHistorial();
+        traslados=Array.isArray(res.traslados)?res.traslados:[];
+        pintarFicha(equipoActual);renderHistorial();renderTraslados();
         estado(`Historial actualizado desde Supabase · ${mantenciones.length} mantención(es)`);
       }catch(e){estado(e.message,true);$('historial').replaceChildren(nodo('div','No se pudo cargar el historial.','empty'));}
     }
@@ -163,7 +190,7 @@
       $('areaMecanico').classList.toggle('hide',!activo);
       $('panelFormulario').classList.toggle('hide',!activo);
       $('nombreSesion').textContent=activo?`Mecánico: ${mecanicoActual}`:'';
-      if(activo)renderHistorial();
+      if(activo){renderHistorial();renderTraslados();}
     }
     function restablecerFormulario(){
       registroEditado=null;$('formMantencion').reset();
@@ -212,6 +239,40 @@
       $('btnGuardar').textContent='Guardar cambios';
       $('panelFormulario').scrollIntoView({behavior:'smooth'});
     }
+
+    function renderTraslados(){
+      const sitio=$('lugarActual');
+      const ub=equipoActual?.ubicacion_actual || equipoActual?.ubicacion || 'Por registrar';
+      const serv=equipoActual?.servicio || 'Por registrar';
+      sitio.textContent=`Ubicación: ${ub} · Servicio: ${serv}`;
+      const lista=$('historialUbicaciones'); lista.replaceChildren();
+      if(!traslados.length){lista.append(nodo('div','Sin cambios de montaje registrados desde la instalación del sistema.','empty'));return;}
+      for(const t of traslados){
+        const d=nodo('div','','audit');
+        d.append(nodo('strong',`${t.ubicacion_anterior} — ${t.servicio_anterior} → ${t.ubicacion_nueva} — ${t.servicio_nuevo}`));
+        d.append(nodo('div',`${t.responsable_declarado} · ${formatoFecha(t.fecha_hora)}`,'meta'));
+        d.append(nodo('div',`Motivo: ${t.motivo}`,'small')); lista.append(d);
+      }
+    }
+    $('btnMostrarTraslado').addEventListener('click',()=>{
+      $('formTraslado').classList.remove('hide');
+      $('ubicacionNueva').value='';$('servicioNuevo').value='';$('motivoTraslado').value='';
+      $('ubicacionNueva').focus();
+    });
+    $('btnCancelarTraslado').addEventListener('click',()=>{$('formTraslado').classList.add('hide');});
+    $('formTraslado').addEventListener('submit',async event=>{
+      event.preventDefault();if(!mecanicoActual||!bombaActiva||!equipoActual)return;
+      const btn=$('btnGuardarTraslado');btn.disabled=true;
+      const payload={accion:'trasladar',equipo_id:bombaActiva,responsable:mecanicoActual,
+        ubicacion_nueva:$('ubicacionNueva').value,servicio_nuevo:$('servicioNuevo').value,
+        motivo:$('motivoTraslado').value.trim(),
+        ubicacion_esperada:equipoActual.ubicacion_actual ?? null,
+        servicio_esperado:equipoActual.servicio ?? null};
+      try{await solicitar(payload);$('formTraslado').classList.add('hide');await cargarHistorial();
+        alert('Cambio de montaje guardado en Supabase.');
+        $('lugarActual').scrollIntoView({behavior:'smooth'});
+      }catch(e){alert(`No se pudo guardar traslado: ${e.message}`);}finally{btn.disabled=false;}
+    });
     $('btnEntrar').addEventListener('click',()=>{
       const nombre=$('mecanico').value.trim().replace(/\s+/g,' ');
       if(nombre.length<5){alert('Ingresa nombre y apellido.');return;}
